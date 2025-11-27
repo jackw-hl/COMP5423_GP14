@@ -14,9 +14,6 @@ venv/
 ENV/
 env/
 
-# Large model files (download separately)
-retrieval_model/*.npy
-retrieval_model/*.bin
 
 # Jupyter
 .ipynb_checkpoints/
