@@ -81,6 +81,7 @@ python app.py
 # --model Qwen/Qwen2.5-0.5B-Instruct  (fast, default)
 # --model Qwen/Qwen2.5-1.5B-Instruct  (better quality)
 # --port 7860                          (default port)
+# --backend 'api' or 'local' (defaut local)
 ```
 
 Opens at **http://127.0.0.1:7860**
