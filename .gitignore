@@ -34,5 +34,5 @@ nohup.out
 Thumbs.db
 
 retrieval_model/dense_instruction_e5-mistral/*
-retrieval_model/hq_small_collection/*
+#retrieval_model/hq_small_collection/*
 retrieval_model/dense_instruction_qwen3-0.6b/*
