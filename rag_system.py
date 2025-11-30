@@ -21,6 +21,8 @@ from generation_module import (
     ReActEngine
 )
 
+import os
+
 
 @dataclass
 class RAGResponse:
@@ -43,10 +45,14 @@ class IntegratedRAGSystem:
     """
     
     def __init__(self,
-                 model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
-                 data_dir: str = "data",
-                 retrieval_model_dir: str = "retrieval_model",
-                 colbert_index_path: Optional[str] = None):
+                model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
+                data_dir: str = "data",
+                retrieval_model_dir: str = "retrieval_model",
+                colbert_index_path: Optional[str] = None,
+                gen_backend: str = "local", 
+                api_base_url: Optional[str] = "https://api.siliconflow.cn/v1",
+                api_key: Optional[str] = "sk-aocdqjkqpdjngasspiqnjainsfcionzqndnasjqcbqmwhcvj",
+                api_model: str = "Qwen/Qwen2.5-7B-Instruct"):
         """
         Initialize RAG system
         
@@ -106,19 +112,47 @@ class IntegratedRAGSystem:
         
         # Initialize generation
         print("\n[2/3] Initializing Generation Module...")
-        self.generator = BaseGenerator(model_name=model_name)
+
+        self.generator = BaseGenerator(
+            model_name=model_name,
+            backend=gen_backend,
+            api_base_url=api_base_url or os.getenv("SILICONFLOW_BASE_URL"),
+            api_key=api_key or os.getenv("SILICONFLOW_API_KEY"),
+            api_model=api_model or os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        )
+
         
         # Initialize multi-turn components
         print("\n[3/3] Initializing Multi-Turn and Agentic Components...")
         self.dialog_manager = MultiTurnDialogManager()
-        # QueryRefinementEngine needs model and tokenizer from notebook implementation
-        self.query_refiner = QueryRefinementEngine(self.generator.model, self.generator.tokenizer)
+
+
+        # Query refinement backend follows generator backend
+        if getattr(self.generator, "backend", "local") == "api":
+            self.query_refiner = QueryRefinementEngine(
+                model=None,
+                tokenizer=None,
+                backend="api",
+                api_client=self.generator.client,          # 复用 BaseGenerator 里的 OpenAI client
+                api_model=self.generator.api_model,        # 复用同一个 7B 模型名
+            )
+        else:
+            self.query_refiner = QueryRefinementEngine(self.generator.model, self.generator.tokenizer)
+
+        self.react_engine = ReActEngine(self.generator)
+
         self.react_engine = ReActEngine(self.generator)
         
         print("\n" + "=" * 60)
         print("RAG System Initialization Complete!")
         print(f"Available retrieval methods: {self.retrieval_manager.list_available_methods()}")
-        print(f"Generator model: {model_name}")
+        # print(f"Generator model: {model_name}")
+        backend = getattr(self.generator, "backend", "local")
+        gen_desc = getattr(self.generator, "api_model", model_name) if backend == "api" else model_name
+        print(f"Generator backend: {backend}")
+        self.using_model = gen_desc
+        print(f"Generator model: {gen_desc}")
+
         print("=" * 60 + "\n")
     
     def query(self,
