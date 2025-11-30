@@ -196,6 +196,190 @@ class DenseRetriever(BaseRetriever):
             ))
         
         return results
+    
+class Qwen3DenseInstructionRetriever(BaseRetriever):
+    """
+    Dense retriever for Qwen/Qwen3-Embedding-0.6B using a FAISS index,
+    following the DenseInstructionRetriever pattern from dense_qwen3.ipynb.
+    """
+
+    def __init__(
+        self,
+        model_dir: str = "retrieval_model/dense_instruction_qwen3-0.6b",
+        data_dir: str = "data",
+        batch_size: int = 16,
+        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
+        query_prompt_name: str = "query",
+        task_description: str = (
+            "Given a multi-hop question about Wikipedia, retrieve the most relevant passages "
+            "that help answer the question."
+        ),
+    ):
+        """
+        Args:
+            model_dir: directory containing doc_embs.npy, doc_ids.json, faiss_index.bin, meta.json
+            data_dir: directory containing collection.jsonl
+        """
+        self.model_dir = Path(model_dir)
+        self.data_dir = Path(data_dir)
+
+        # File paths (mirroring dense_qwen3.ipynb constants)
+        self.emb_path = self.model_dir / "doc_embs.npy"
+        self.index_path = self.model_dir / "faiss_index.bin"
+        self.meta_path = self.model_dir / "meta.json"
+        self.ids_path = self.model_dir / "doc_ids.json"
+
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.query_prompt_name = query_prompt_name
+        self.task_description = task_description
+
+        # Load document texts (collection.jsonl) like other retrievers
+        self.documents = self._load_collection()
+
+        # Base list of doc_ids is from collection.jsonl
+        self.doc_ids = list(self.documents.keys())
+
+        """Initialize sentence transformer model"""
+        try:
+            from sentence_transformers import SentenceTransformer
+            import faiss
+        except ImportError:
+            raise ImportError("Please install: pip install sentence-transformers")
+
+        # Load SentenceTransformer model
+        self.model = SentenceTransformer(self.model_name)
+        print(f"Loaded SentenceTransformer model: {self.model_name}")
+
+        # Load embeddings + FAISS index + meta + doc_ids
+        self._load_from_disk()
+
+    # ---------- internal helpers ----------
+
+    def _load_collection(self) -> Dict[str, str]:
+        """Load document collection from data/collection.jsonl"""
+        collection_path = self.data_dir / "collection.jsonl"
+        if not collection_path.exists():
+            raise FileNotFoundError(f"Collection file not found at: {collection_path}")
+
+        documents: Dict[str, str] = {}
+        with open(collection_path, "r", encoding="utf-8") as f:
+            for line in f:
+                obj = json.loads(line)
+                # expected format: {"id": ..., "text": ...}
+                documents[obj["id"]] = obj["text"]
+
+        print(f"Loaded {len(documents)} documents for Qwen3DenseInstructionRetriever")
+        return documents
+
+    def _load_from_disk(self):
+        """Load doc embeddings, FAISS index, meta and doc_ids from disk."""
+        if not (self.emb_path.exists()
+                and self.index_path.exists()
+                and self.meta_path.exists()
+                and self.ids_path.exists()):
+            raise FileNotFoundError(
+                f"Qwen3 dense artifacts not found under {self.model_dir}. "
+                f"Expected files: {self.emb_path.name}, {self.index_path.name}, "
+                f"{self.meta_path.name}, {self.ids_path.name}"
+            )
+
+        print("Loading embeddings and index from disk...")
+        # Note: doc_embs is not strictly needed at runtime (FAISS holds vectors),
+        # but we load it anyway in case you want to inspect / debug.
+        self.doc_embs = np.load(self.emb_path)
+        try:
+            import faiss
+        except:
+            raise ImportError("Please install: pip install faiss")
+        self.index = faiss.read_index(str(self.index_path))
+
+        with open(self.meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        with open(self.ids_path, "r", encoding="utf-8") as f:
+            saved_ids = json.load(f)
+
+        # doc_ids used by FAISS index
+        self.faiss_doc_ids = saved_ids
+
+        if len(self.faiss_doc_ids) != self.index.ntotal:
+            print(
+                "Warning: number of doc_ids in doc_ids.json "
+                "does not match FAISS index.ntotal."
+            )
+
+        # Override model / prompt info from meta if present
+        self.model_name = meta.get("model_name", self.model_name)
+        self.query_prompt_name = meta.get("query_prompt_name", self.query_prompt_name)
+        self.task_description = meta.get("task_description", self.task_description)
+
+        print("Loaded index with", self.index.ntotal, "vectors.")
+        print("Model used:", self.model_name)
+        print("Query prompt_name:", self.query_prompt_name)
+
+    def _encode_queries(self, questions: List[str]) -> np.ndarray:
+        """
+        Encode queries with *instructions*, following dense_qwen3.ipynb:
+
+        1) Use Sentence-Transformers built-in prompt_name if available.
+        2) Fallback: 'Instruct: ...\\nQuery: ...' formatting.
+        """
+        if self.query_prompt_name is not None:
+            emb = self.model.encode(
+                questions,
+                batch_size=self.batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+                prompt_name=self.query_prompt_name,
+            )
+        else:
+            if self.task_description:
+                texts = [
+                    f"Instruct: {self.task_description}\nQuery: {q}"
+                    for q in questions
+                ]
+            else:
+                texts = questions
+
+            emb = self.model.encode(
+                texts,
+                batch_size=self.batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+
+        # L2-normalize (doc vectors were normalized before building the index)
+        norms = np.linalg.norm(emb, axis=1, keepdims=True)
+        emb = emb / np.clip(norms, 1e-12, None)
+        emb = np.ascontiguousarray(emb, dtype="float32")
+        return emb
+
+    # ---------- BaseRetriever interface ----------
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[RetrievalResult]:
+        # 1. Encode query → (1, dim)
+        q_emb = self._encode_queries([query])
+
+        # 2. FAISS search
+        scores, idx = self.index.search(q_emb, top_k)
+        scores = scores[0]
+        idx = idx[0]
+
+        results: List[RetrievalResult] = []
+        for rank, (i, score) in enumerate(zip(idx, scores), start=1):
+            if i < 0 or i >= len(self.faiss_doc_ids):
+                continue  # FAISS may return -1 if no result
+            doc_id = self.faiss_doc_ids[i]
+            text = self.documents.get(doc_id, "")
+            results.append(
+                RetrievalResult(
+                    doc_id=doc_id,
+                    score=float(score),
+                    text=text,
+                    rank=rank,
+                )
+            )
+        return results
 
 
 class ColBERTRetriever(BaseRetriever):
@@ -347,6 +531,25 @@ class RetrievalManager:
             model_dir=self.retrieval_model_dir,
             data_dir=self.data_dir
         )
+
+    def initialize_qwen3_dense(
+        self,
+        model_dir: str = "retrieval_model/dense_instruction_qwen3-0.6b",
+        batch_size: int = 16,
+    ):
+        """
+        Initialize the Qwen3 instruction-aware dense retriever
+        (FAISS index built in dense_qwen3.ipynb).
+
+        Registered under method name 'qwen3_dense'.
+        """
+        print("\nInitializing Qwen3 dense instruction retriever...")
+        self.retrievers["qwen3_dense"] = Qwen3DenseInstructionRetriever(
+            model_dir=model_dir,
+            data_dir=self.data_dir,
+            batch_size=batch_size,
+        )
+        print("Qwen3 dense instruction retriever initialized as method 'qwen3_dense'")
     
     def initialize_colbert(self, index_path: str):
         """Initialize ColBERT retriever"""
@@ -415,6 +618,14 @@ def build_search_engine_for_webui(artifacts: str = None, method: str = "bm25", d
         retriever = SparseRetriever(method=method, data_dir=data_dir)
     elif method == "dense":
         retriever = DenseRetriever(data_dir=data_dir)
+    elif method == "qwen3_dense":
+        retriever = Qwen3DenseInstructionRetriever(
+            model_dir="retrieval_mdoel/dense_instruction_qwen3-0.6b",
+            data_dir=data_dir,
+        )
+    elif method == "colbert":
+        retriever = ColBERTRetriever(index_path="retrieval_model/hq_small_collection",
+                                     data_dir=data_dir)
     elif method == "hybrid":
         # Default hybrid: BM25 + Dense
         bm25 = SparseRetriever(method="bm25", data_dir=data_dir)

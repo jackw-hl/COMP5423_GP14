@@ -79,6 +79,15 @@ class IntegratedRAGSystem:
             self.retrieval_manager.initialize_dense()
         except Exception as e:
             print(f"Warning: Failed to initialize dense retrieval: {e}")
+
+         # Initialize Qwen3 instruction-aware dense retriever (FAISS)
+        try:
+            self.retrieval_manager.initialize_qwen3_dense(
+                model_dir="retrieval_model/dense_instruction_qwen3-0.6b",
+                batch_size=16,  # matches DEFAULT_BATCH_SIZE in dense_qwen3.ipynb for qwen3-0.6b
+            )
+        except Exception as e:
+            print(f"Warning: Failed to initialize Qwen3 dense retriever: {e}")
         
         # Initialize ColBERT (if available)
         if colbert_index_path:
