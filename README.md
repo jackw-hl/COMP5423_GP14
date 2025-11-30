@@ -52,7 +52,7 @@ Integrated Retrieval-Augmented Generation system for HotpotQA dataset.
 1. **Clone the repository**
 ```bash
 git clone <your-repo-url>
-cd Group14
+cd COMP5423_GP14
 ```
 
 2. **Create virtual environment**

@@ -234,14 +234,22 @@ class ColBERTRetriever(BaseRetriever):
         """Initialize ColBERT model"""
         try:
             from ragatouille import RAGPretrainedModel
-        except ImportError:
-            raise ImportError("Please install: pip install ragatouille")
+        except ImportError as e:
+            # 這裡不要 raise，否則外面只會看到很籠統的訊息
+            print("Warning: Failed to import ragatouille:", e)
+            print("ColBERT retriever will not be available")
+            self.rag = None
+            return
         
         try:
+            print(f"Loading ColBERT index from: {self.index_path}")
             self.rag = RAGPretrainedModel.from_index(self.index_path)
             print(f"Loaded ColBERT index from {self.index_path}")
         except Exception as e:
-            print(f"Warning: Could not load ColBERT index: {e}")
+            import traceback
+            print("Warning: Could not load ColBERT index:")
+            print(e)
+            traceback.print_exc()
             print("ColBERT retriever will not be available")
             self.rag = None
     

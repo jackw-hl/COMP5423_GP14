@@ -46,7 +46,7 @@ class IntegratedRAGSystem:
                  model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
                  data_dir: str = "data",
                  retrieval_model_dir: str = "retrieval_model",
-                 colbert_index_path: Optional[str] = None):
+                 colbert_index_path: str = "retrieval_model/hq_small_collection"):
         """
         Initialize RAG system
         
