@@ -218,11 +218,20 @@ def query_rag(
         }
         new_history = (history_state or []) + [new_turn]
 
+        # chat_display = []
+        # for t in new_history:
+        #     chat_display.append(
+        #         (t["user"], _format_chat_message(t["answer"], t["original_query"], t["refined_query"]))
+        #     )
         chat_display = []
         for t in new_history:
-            chat_display.append(
-                (t["user"], _format_chat_message(t["answer"], t["original_query"], t["refined_query"]))
-            )
+            chat_display.append({"role": "user", "content": t["user"]})
+            chat_display.append({
+                "role": "assistant",
+                "content": _format_chat_message(t["answer"], t["original_query"], t["refined_query"])
+            })
+
+
 
         docs_html = build_docs_html(_safe_get(response, "retrieved_docs", []) or [])
         workflow_html = build_workflow_html(
@@ -261,7 +270,13 @@ def create_simple_ui():
 
         with gr.Row():
             with gr.Column():
-                chatbot = gr.Chatbot(label="Dialogue", height=420)
+                chatbot = gr.Chatbot(
+                    label="Dialogue",
+                    height=420,
+                    type="messages",      
+                    allow_tags=False,     
+                )
+
 
                 question = gr.Textbox(
                     label="Your Question",
